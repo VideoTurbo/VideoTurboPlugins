@@ -1,0 +1,31 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Python 字节码与打包产物
+*.pyc
+*.pyo
+*.egg-info/
+/build/
+/dist/
+
+# 测试覆盖率
+.coverage
+.coverage.*
+/htmlcov/
+/coverage.xml
+
+# 本地环境配置
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# macOS 文件夹元数据
+.DS_Store
+
+.cursorrules
+AGENTS.md
+CLAUDE.md
