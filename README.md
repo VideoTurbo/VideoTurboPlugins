@@ -56,26 +56,28 @@
 
 | 网盘 | 版本 | 插件文件 | 插件地址 |
 | --- | --- | --- | --- |
-| OpenList（兼容 AList v3） | 0.1.0 | [`media_source/openlist.py`](media_source/openlist.py) | `https://github.com/VideoTurbo/VideoTurboPlugins/blob/main/media_source/openlist.py` |
+| OpenList（兼容 AList v3） | 0.2.0 | [`media_source/openlist.py`](media_source/openlist.py) | `https://github.com/VideoTurbo/VideoTurboPlugins/blob/main/media_source/openlist.py` |
 
 ### 安装和设置
 
+OpenList 插件 0.2.0 起需要 v0.1.0 之后的 VideoTurbo（支持媒体库来源插件接口 4，设置表单按登录方式显示对应的项）。
+
 1. 按上文“云 GPU 平台插件”的方法从插件仓库或按地址安装插件，核对 SHA-256 后确认。
 2. 在“设置 → 插件”的 OpenList 卡片上点设置按钮，填写：
-   - **OpenList 地址**：主程序访问 OpenList 的地址，例如 `http://192.168.1.10:5244`。
-   - **登录方式**：
+   - **OpenList 地址**：例如 `http://192.168.1.10:5244`。主程序和 GPU 机器都用这个地址访问 OpenList，
+     请填局域网或公网地址，不要填 `127.0.0.1` 或容器名。
+   - **登录方式**（表单只显示所选方式需要填写的项）：
      - 令牌：OpenList“设置 → 其他”中的令牌，拥有管理员权限，最简单；
      - 用户名和密码：账号需要有读取、写入和改名权限，不能开启两步验证；登录后得到的令牌保存在插件状态里，过期后自动重新登录；
      - 游客：不登录，只适用于开放了游客访问的 OpenList，游客通常没有写入权限，无法发布字幕。
-   - **影片地址**：GPU 机器下载影片、主程序读取影片信息时使用的地址。
-     - OpenList 下载链接（`/d/`，默认）：由 OpenList 按存储设置跳转到网盘直链或代理转发，兼容性最好；
-     - 网盘直链（`raw_url`）：不经过 OpenList，但部分网盘的直链需要特定请求头或绑定请求来源，GPU 机器可能无法下载。
-   - **GPU 机器使用的地址**（可选）：主程序用容器名或 `127.0.0.1` 访问 OpenList 时，填写 GPU 机器能访问的局域网地址。
    - **目录密码**（可选）：媒体库所在目录在 OpenList 中设置了访问密码时填写。
 3. 打开“设置 → 媒体库”，添加媒体库时来源选择 OpenList，再选择影片所在的文件夹。
 
 ### 注意事项
 
+- GPU 机器通过 OpenList 的下载链接（`/d/…`）下载影片。OpenList 存储设置里没开“Web 代理”和“本地代理”时，
+  OpenList 302 跳转到网盘直链，影片直接从网盘下载、不经过 OpenList；开了代理时由 OpenList 转发，影片流量经过 OpenList
+  所在的机器。部分网盘的驱动强制代理，以 OpenList 的存储设置为准。
 - 插件列目录时使用 OpenList 的目录缓存，不强制刷新。在 OpenList 之外往网盘里添加的影片，要等 OpenList 的目录缓存过期后才会被扫描到；
   可以在 OpenList 的存储设置里调短“缓存过期”时间，或在 OpenList 网页上手动刷新该目录。通过插件发布的字幕和改名由 OpenList 自己更新缓存。
 - 网盘提供文件哈希时，插件用它认出改名或移动过的影片；不提供时，改名后的影片按新影片处理。

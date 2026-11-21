@@ -1,7 +1,8 @@
 """OpenList 插件（https://github.com/OpenListTeam/OpenList）。
 
 把 OpenList（也兼容 AList v3）挂载的网盘作为 VideoTurbo 的媒体库来源：主程序通过 OpenList 浏览目录、
-列出影片、读写字幕和海报，GPU 机器通过 OpenList 的下载链接或网盘直链直接下载影片抽音频。
+列出影片、读写字幕和海报，GPU 机器通过 OpenList 的下载链接（/d/）直接下载影片抽音频。存储没开代理时，
+OpenList 把下载链接 302 跳转到网盘直链，影片不经过 OpenList；开了 Web 代理或本地代理时由 OpenList 转发。
 
 登录方式三选一：OpenList“设置 → 其他”中的令牌、用户名和密码（登录后得到的令牌保存在插件状态里，
 过期后自动重新登录），或游客（不登录，游客通常没有写入权限，无法发布字幕）。
@@ -35,8 +36,8 @@ from video_turbo.plugins.base import (
     response_error,
 )
 
-# 适配的 VideoTurbo 媒体库来源插件接口版本。
-PLUGIN_API = 3
+# 适配的 VideoTurbo 媒体库来源插件接口版本（4 起字段支持 visible_when）。
+PLUGIN_API = 4
 
 SERVICE = "OpenList"
 # 请求 OpenList 和下载影片时使用同一个 User-Agent：部分网盘的直链与获取直链时的 User-Agent 绑定。
@@ -48,8 +49,6 @@ _MAX_REDIRECTS = 5
 AUTH_TOKEN = "token"
 AUTH_PASSWORD = "password"
 AUTH_GUEST = "guest"
-LINK_DOWN = "down"
-LINK_RAW = "raw"
 
 _TIME = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})?")
 
@@ -137,7 +136,7 @@ def _file_key(item: dict[str, Any]) -> str | None:
 class OpenListSource(MediaSourcePlugin):
     id = "openlist"
     label = "OpenList"
-    version = "0.1.0"
+    version = "0.2.0"
     homepage = "https://github.com/OpenListTeam/OpenList"
     icon = _ICON
     description = "把 OpenList（或 AList v3）挂载的网盘作为媒体库来源。"
@@ -147,7 +146,11 @@ class OpenListSource(MediaSourcePlugin):
             "OpenList 地址",
             secret=False,
             placeholder="http://192.168.1.10:5244",
-            help="主程序访问 OpenList 的地址，与浏览器打开 OpenList 的地址相同。",
+            help=(
+                "主程序和 GPU 机器都用这个地址访问 OpenList，请填局域网或公网地址，不要填 127.0.0.1 或容器名。"
+                "影片通过 OpenList 的下载链接下载：存储没开 Web 代理和本地代理时，OpenList 302 跳转到网盘直链，"
+                "影片不经过 OpenList；开了代理时由 OpenList 转发。"
+            ),
             binds_secrets=True,
         ),
         CredentialField(
@@ -160,56 +163,26 @@ class OpenListSource(MediaSourcePlugin):
                 (AUTH_GUEST, "游客（不登录）"),
             ),
             default=AUTH_TOKEN,
-            required=False,
             help="游客通常没有写入权限，无法发布字幕。",
         ),
         CredentialField(
             "token",
             "令牌",
-            required=False,
-            help="登录方式为“令牌”时填写：OpenList“设置 → 其他”中的令牌，拥有管理员权限。",
+            help="OpenList“设置 → 其他”中的令牌，拥有管理员权限。",
+            visible_when={"auth": (AUTH_TOKEN,)},
         ),
         CredentialField(
             "username",
             "用户名",
             secret=False,
-            required=False,
-            help="登录方式为“用户名和密码”时填写。账号需要有读取、写入和改名权限，不能开启两步验证。",
+            help="账号需要有读取、写入和改名权限，不能开启两步验证。",
+            visible_when={"auth": (AUTH_PASSWORD,)},
         ),
         CredentialField(
             "password",
             "密码",
-            required=False,
             trim=False,
-            help="登录方式为“用户名和密码”时填写。",
-        ),
-        CredentialField(
-            "link",
-            "影片地址",
-            type="select",
-            options=(
-                (LINK_DOWN, "OpenList 下载链接（/d/）"),
-                (LINK_RAW, "网盘直链（raw_url）"),
-            ),
-            default=LINK_DOWN,
-            required=False,
-            help=(
-                "GPU 机器下载影片、主程序读取影片信息时使用的地址。下载链接由 OpenList 按存储设置跳转到网盘"
-                "或代理转发，兼容性最好；网盘直链不经过 OpenList，但部分网盘的直链需要特定请求头或绑定请求"
-                "来源，GPU 机器可能无法下载。"
-            ),
-        ),
-        CredentialField(
-            "worker_url",
-            "GPU 机器使用的地址",
-            secret=False,
-            required=False,
-            placeholder="http://192.168.1.10:5244",
-            help=(
-                "GPU 机器访问 OpenList 的地址，留空时与“OpenList 地址”相同。主程序用容器名或 127.0.0.1 "
-                "访问 OpenList 时，在这里填写局域网地址。"
-            ),
-            binds_secrets=True,
+            visible_when={"auth": (AUTH_PASSWORD,)},
         ),
         CredentialField(
             "folder_password",
@@ -233,10 +206,6 @@ class OpenListSource(MediaSourcePlugin):
     def validate_settings(cls, settings: dict[str, Any]) -> dict[str, Any]:
         settings = dict(settings)
         settings["url"] = normalize_base_url(str(settings.get("url") or ""), "OpenList 地址")
-        if settings.get("worker_url"):
-            settings["worker_url"] = normalize_base_url(
-                str(settings["worker_url"]), "GPU 机器使用的地址"
-            )
         mode = settings.get("auth") or AUTH_TOKEN
         if mode == AUTH_TOKEN and not settings.get("token"):
             raise PluginConfigError("登录方式为“令牌”时需要填写令牌。")
@@ -405,22 +374,11 @@ class OpenListSource(MediaSourcePlugin):
     # ---- 下载地址 ----
 
     def _link(self, path: str) -> MediaInput:
+        """OpenList 下载链接（/d/）：OpenList 按存储设置 302 跳转到网盘直链或代理转发。
+
+        跳转时 OpenList 按下载方（GPU 机器或主程序）自己的 IP 和 User-Agent 获取网盘直链。
+        """
         path = _clean_path(path)
-        if self.settings.get("link") == LINK_RAW:
-            try:
-                data = self._call(
-                    "/api/fs/get", {"path": path, "password": self._folder_password()}
-                )
-            except OpenListError as exc:
-                if exc.missing:
-                    raise FileNotFoundError(path) from exc
-                raise
-            raw_url = data.get("raw_url") if isinstance(data, dict) else None
-            if not isinstance(raw_url, str) or not raw_url.startswith(("http://", "https://")):
-                raise PluginCallError(
-                    f"OpenList 没有返回 {posixpath.basename(path)} 的网盘直链，请把“影片地址”改为 OpenList 下载链接。"
-                )
-            return MediaInput(raw_url, {"User-Agent": USER_AGENT})
         item = self._item(path)
         if item is None or item.get("is_dir"):
             raise FileNotFoundError(path)
@@ -548,12 +506,6 @@ class OpenListSource(MediaSourcePlugin):
             )
 
     def media_input(self, path: str) -> MediaInput:
-        return self._link(path)
-
-    def download(self, path: str) -> MediaInput:
-        # 在 GPU 机器上运行：改用 GPU 机器能访问的地址（网盘直链也按 GPU 机器的来源获取）。
-        if worker_url := str(self.settings.get("worker_url") or "").rstrip("/"):
-            self._base = worker_url
         return self._link(path)
 
     def test(self) -> str:
