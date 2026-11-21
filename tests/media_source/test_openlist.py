@@ -144,9 +144,7 @@ class FakeOpenList:
             path = body["path"]
             if path not in self.files:
                 return self.fail(500, "object not found")
-            return self.ok(
-                {**self.obj(path, self.files[path]), "raw_url": f"https://cdn.example{path}"}
-            )
+            return self.ok(self.obj(path, self.files[path]))
         if endpoint == "/api/fs/mkdir":
             self.dirs.add(body["path"])
             return self.ok()
@@ -177,7 +175,7 @@ def server() -> FakeOpenList:
 
 
 def source(server: FakeOpenList, state=None, on_state=None, **settings) -> OpenListSource:
-    values = {"url": BASE, "auth": "token", "token": TOKEN, "link": "down", **settings}
+    values = {"url": BASE, "auth": "token", "token": TOKEN, **settings}
     return OpenListSource(
         values, state=state, on_state=on_state, transport=httpx.MockTransport(server)
     )
@@ -188,14 +186,9 @@ def source(server: FakeOpenList, state=None, on_state=None, **settings) -> OpenL
 
 def test_validate_settings_checks_address_and_login_fields():
     settings = OpenListSource.validate_settings(
-        {
-            "url": "http://openlist.lan:5244/",
-            "auth": "token",
-            "token": "t",
-            "worker_url": "http://192.168.1.10:5244/",
-        }
+        {"url": "http://openlist.lan:5244/", "auth": "token", "token": "t"}
     )
-    assert settings["url"] == BASE and settings["worker_url"] == "http://192.168.1.10:5244"
+    assert settings["url"] == BASE
     with pytest.raises(PluginConfigError, match="令牌"):
         OpenListSource.validate_settings({"url": BASE, "auth": "token"})
     with pytest.raises(PluginConfigError, match="用户名和密码"):
@@ -209,6 +202,34 @@ def test_settings_merge_rejects_new_address_with_kept_token():
     saved = OpenListSource.merge_settings({}, {"url": BASE, "auth": "token", "token": TOKEN})
     with pytest.raises(PluginConfigError):
         OpenListSource.merge_settings(saved, {"url": "http://evil.example"})
+
+
+def test_login_fields_follow_selected_mode():
+    fields = {field.key: field for field in OpenListSource.settings_fields}
+    assert set(fields) == {"url", "auth", "token", "username", "password", "folder_password"}
+    assert fields["token"].describe()["visible_when"] == {"auth": ["token"]}
+    assert (
+        fields["username"].visible_when
+        == fields["password"].visible_when
+        == {"auth": ("password",)}
+    )
+    # 没选过登录方式时按默认的“令牌”。
+    with pytest.raises(PluginConfigError):
+        OpenListSource.merge_settings({}, {"url": BASE})
+    saved = OpenListSource.merge_settings({}, {"url": BASE, "token": TOKEN, "username": "u"})
+    assert saved == {"url": BASE, "token": TOKEN}
+    # 换成用户名和密码：令牌被清掉，用户名和密码必填。
+    with pytest.raises(PluginConfigError):
+        OpenListSource.merge_settings(saved, {"auth": "password", "username": USERNAME})
+    switched = OpenListSource.merge_settings(
+        saved, {"auth": "password", "username": USERNAME, "password": PASSWORD}
+    )
+    assert switched == {"url": BASE, "auth": "password", "username": USERNAME, "password": PASSWORD}
+    # 游客：三项都不保存。
+    assert OpenListSource.merge_settings(switched, {"auth": "guest"}) == {
+        "url": BASE,
+        "auth": "guest",
+    }
 
 
 # ---- 浏览与读取 ----
@@ -265,23 +286,19 @@ def test_read_bytes_follows_redirect_without_token_and_enforces_limit(server):
     assert down.url.params["sign"] == "abc:0"
 
 
-def test_media_input_and_download_addresses(server):
+def test_media_input_and_download_use_openlist_link(server):
     server.sign = "s:0"
     server.files["/movies/中文 #1.mp4"] = b"x"
     with source(server) as drive:
         target = drive.media_input("/movies/中文 #1.mp4")
         assert target.url == f"{BASE}/d/movies/%E4%B8%AD%E6%96%87%20%231.mp4?sign=s%3A0"
         assert target.headers == {"User-Agent": USER_AGENT}
-    with source(server, worker_url="http://192.168.1.10:5244") as drive:
-        assert drive.download("/movies/a.mp4").url.startswith(
-            "http://192.168.1.10:5244/d/movies/a.mp4"
-        )
-    with source(server, link="raw") as drive:
-        target = drive.download("/movies/a.mp4")
-        assert target.url == "https://cdn.example/movies/a.mp4"
-        assert target.headers["User-Agent"] == USER_AGENT
+        assert drive.download("/movies/a.mp4").url == f"{BASE}/d/movies/a.mp4?sign=s%3A0"
         with pytest.raises(FileNotFoundError):
             drive.media_input("/movies/none.mp4")
+        with pytest.raises(FileNotFoundError):
+            drive.media_input("/movies")
+    assert server.calls("/api/fs/get") == []
 
 
 # ---- 写入与改名 ----
